@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
@@ -9,15 +10,35 @@ const nodemailer = require('nodemailer');
 const { text } = require('body-parser');
 const transporter = require('./Middleware/mailmiddleware');
 const OtpSch = require('./Model/otpSchema');
+const Feedback = require('./Model/Feedback')
 const AIcard = require('./Model/CardSchema');
+require('dotenv').config();
 const app = express();
 const fs = require("fs");
 const path = require("path");
 
+
+
 const jwt_key = "sjdkjwkokdowkdokwldkowkdowkdowkdwokowkkowkdkdldldldldlpwpwpwpwwlspspdpekemmdqp2o02o2wp-2w0w";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-require('dotenv').config();
+
 const PORT = process.env.PORT;
+
+const multer = require('multer');
+
+// Set up storage for uploaded files
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, 'uploads/'); // Folder to save uploads
+    },
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + '-' + file.originalname); // Unique file names
+    }
+});
+
+// Create upload instance
+const upload = multer({ storage: storage });
+
 
 require('./Db/db');
 
@@ -29,6 +50,7 @@ app.use(cors(
     }
 ))
 app.use(express.json())
+
 
 
 
@@ -143,15 +165,16 @@ app.post('/forgot_password', async (req, res) => {
             subject: 'OTP for Password Reset',
             text: ` Hello ${existUser.name}, \n\nYour OTP for password reset is: ${otp}.\n\nIt is valid for 3 minutes.`
         };
-        transporter.sendMail(mail_Option, (error, info) => {
-            if (error) {
-                console.log('Error sending OTP:', error);
-                return res.status(500).json({ message: 'Failed to send OTP' });
-            } else {
+        transporter.sendMail(mail_Option)
+            .then(info => {
                 console.log('OTP Sent:', info.response);
                 res.status(200).json({ message: 'OTP sent successfully' });
-            }
-        });
+            })
+            .catch(error => {
+                console.error('Error sending OTP:', error); // <== Important for debugging
+                res.status(500).json({ message: 'Failed to send OTP', error: error.message });
+            });
+
     } catch (error) {
         console.error('Something went wrong:', error);
         res.status(500).json({ message: 'Internal Server Error' });
@@ -177,7 +200,7 @@ app.post('/update_password', async (req, res) => {
     const hashpass = await bcrypt.hash(pass, 10);
     try {
         const updatePass = await User.findOneAndUpdate({ email }, { pass: hashpass }, { new: true })
-        if (!updatedUser) {
+        if (!updatePass) {
             return res.status(404).json({ message: 'User not found' });
         }
         res.status(200).json({ message: 'Password changed successfully' });
@@ -189,22 +212,64 @@ app.post('/update_password', async (req, res) => {
 
 app.post("/api/interviews", async (req, res) => {
     try {
-        const newInterview = new AIcard(req.body);
+        const {
+            userId,
+            jobRole,
+            jobDescription,
+            yearsOfExperience,
+            technology,
+            expiryDate,
+            questions // <- make sure you're extracting it here
+        } = req.body;
+
+        if (!userId || !jobRole || !expiryDate) {
+            return res.status(400).json({ message: "Missing required fields!" });
+        }
+
+        const newInterview = new AIcard({
+            userId,
+            jobRole,
+            jobDescription,
+            yearsOfExperience,
+            technology,
+            expiryDate,
+            questions
+        });
+
         await newInterview.save();
         res.status(201).json({ message: "Mock interview created successfully!" });
     } catch (error) {
+        console.error("Server error:", error);
         res.status(500).json({ message: "Server error", error });
     }
 });
 
-app.get('/api/interviews', async (req, res) => {
+
+
+app.get("/api/interviews/user", verifyToken, async (req, res) => {
     try {
-        const currentDate = new Date();
-        await AIcard.deleteMany({ expiryDate: { $lt: currentDate } }); // Delete expired records
-        const interviews = await AIcard.find();
+        const loggedInUserId = req.user.id; // Extracted from JWT by middleware
+
+        // Fetch interviews belonging to the logged-in user & not expired
+        const interviews = await AIcard.find({
+            userId: loggedInUserId,
+            expiryDate: { $gte: new Date() }, // Only non-expired interviews
+        });
+
         res.status(200).json(interviews);
     } catch (error) {
-        res.status(500).json({ message: "Server error", error });
+        console.error("Error fetching interviews:", error);
+        res.status(500).json({ message: "Server error" });
+    }
+});
+
+app.get("/api/interviews", async (req, res) => {
+    try {
+        const interviews = await AIcard.find({ expiryDate: { $gte: new Date() } });
+        res.status(200).json(interviews);
+    } catch (error) {
+        console.error("Error fetching interviews:", error);
+        res.status(500).json({ message: "Server error" });
     }
 });
 
@@ -225,6 +290,108 @@ app.delete('/api/interviews/:id', async (req, res) => {
         res.status(500).json({ message: "Server error", error });
     }
 });
+app.post('/api/save-transcript', async (req, res) => {
+    const { questionId, answerText } = req.body;
+
+    try {
+        // Save to MongoDB
+        await Answer.create({
+            questionId,
+            transcript: answerText,
+        });
+
+        res.status(200).json({ message: "Answer saved successfully" });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Failed to save answer" });
+    }
+});
+
+app.post('/save-feedback', async (req, res) => {
+    try {
+        console.log('hi1')
+        const { interviewId, userId, questionIndex, question, userAnswer, feedback, score } = req.body;
+        console.log("Incoming feedback data:", req.body);
+
+        const newFeedback = new Feedback({
+            interviewId: new mongoose.Types.ObjectId(interviewId),
+            userId: new mongoose.Types.ObjectId(userId),
+            questionIndex,
+            question,
+            userAnswer,
+            feedback,
+            score,
+        });
+
+        console.log('hi3')
+
+        await newFeedback.save();
+
+        res.status(201).json({ message: 'Feedback saved successfully!' });
+    } catch (error) {
+        console.error('Error saving feedback:', error);
+        res.status(500).json({ error: 'Server error while saving feedback.' });
+    }
+});
+
+app.post('/api/get-feedbacks', async (req, res) => {
+    try {
+        const { interviewId, userId } = req.body;
+
+        if (!interviewId || !userId) {
+            return res.status(400).json({ error: 'interviewId and userId are required.' });
+        }
+
+        const feedbacks = await Feedback.find({
+            interviewId: new mongoose.Types.ObjectId(interviewId),
+            userId: new mongoose.Types.ObjectId(userId),
+        }).sort({ questionIndex: 1 });
+
+        res.status(200).json({ feedbacks });
+    } catch (error) {
+        console.error('Error fetching feedbacks:', error);
+        res.status(500).json({ error: 'Server error while fetching feedbacks.' });
+    }
+});
+
+app.post('/api/get-feedbacks-userid', async (req, res) => {
+    try {
+        const { interviewId } = req.body;
+
+        if (!interviewId) {
+            return res.status(400).json({ error: 'interviewId and userId are required.' });
+        }
+
+        const feedbacks = await Feedback.find({
+            interviewId: new mongoose.Types.ObjectId(interviewId),
+        }).sort({ questionIndex: 1 });
+
+        res.status(200).json({ feedbacks });
+    } catch (error) {
+        console.error('Error fetching feedbacks:', error);
+        res.status(500).json({ error: 'Server error while fetching feedbacks.' });
+    }
+});
+
+app.get('/user-details', async (req, res) => {
+    try {
+        const { id } = req.query;
+        if (!id) {
+            return res.status(400).json({ message: 'User ID is required.' });
+        }
+
+        const existUser = await User.findById(id);
+        if (!existUser) {
+            return res.status(404).json({ message: 'User does not exist' });
+        }
+
+        res.status(200).json(existUser);
+    } catch (error) {
+        console.error('Error fetching user:', error);
+        res.status(500).json({ error: 'Server error while fetching user.' });
+    }
+});
+
 
 app.get('/', (req, res) => {
     res.send("hi");

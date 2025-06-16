@@ -20,6 +20,9 @@
         "fs": "^0.0.1-security",
         "jsonwebtoken": "^9.0.2",
         "mongoose": "^8.8.2",
-        "nodemailer": "^6.9.16"
+        "multer": "^1.4.5-lts.2",
+        "nodemailer": "^6.9.16",
+        "react-hook-speech-to-text": "^0.8.0",
+        "uuid": "^11.1.0"
     }
 }

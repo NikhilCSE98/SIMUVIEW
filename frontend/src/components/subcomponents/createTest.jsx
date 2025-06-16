@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import axios from "axios";
+import { jwtDecode } from "jwt-decode";
+
 
 const CreateTest = ({ onClose, onSubmit }) => {
     const [JProfile, setJProfile] = useState("");
@@ -6,33 +9,116 @@ const CreateTest = ({ onClose, onSubmit }) => {
     const [JExp, setJExp] = useState("");
     const [JSkills, setJSkills] = useState("");
     const [JExpiry, setJExpiry] = useState("");
+    const [userId, setUserId] = useState(null);
+
+    // Decode JWT and extract userId
+    useEffect(() => {
+        const token = localStorage.getItem("jwt");
+        if (token) {
+            try {
+                const decodedToken = jwtDecode(token);
+                setUserId(decodedToken.id);
+            } catch (error) {
+                console.error("Invalid token:", error);
+            }
+        }
+    }, []);
 
     const handleSubmit = async () => {
+        if (!userId) {
+            alert("User not authenticated!");
+            return;
+        }
+
         const formData = {
-            jobRole: JProfile,
-            jobDescription: JDesc,
-            yearsOfExperience: JExp,
-            technology: JSkills,
-            expiryDate: JExpiry, // Add expiry date
+            userId,
+            jobRole: JProfile.trim(),
+            jobDescription: JDesc.trim(),
+            yearsOfExperience: JExp.trim(),
+            technology: JSkills.trim(),
+            expiryDate: JExpiry,
         };
 
+        console.log("Form Data:", formData);
+
+        if (!formData.jobRole || !formData.expiryDate) {
+            alert("Please fill all required fields!");
+            return;
+        }
+
         try {
-            const response = await fetch("http://localhost:3009/api/interviews", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
+            const token = localStorage.getItem("jwt");
+
+            const geminiResponse = await axios.post(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`,
+                {
+                    contents: [
+                        {
+                            parts: [
+                                {
+                                    text: ` As an experienced prompt engineer, generate a JSON array containing 5 technical interview questions along with detailed answers based on the following job information. Each object in the array should have the fields "question" and "answer", formatted as follows:
+
+        [
+          { "question": "<Question text>", "answer": "<Answer text>" },
+          ...
+        ]
+
+        Job Information:
+        - Job Position: ${JProfile}
+        - Job Description: ${JDesc}
+        - Years of Experience Required: ${JExp}
+        - Tech Stacks: ${JSkills}
+
+        The questions should assess skills in ${JSkills} development and best practices, problem-solving, and experience handling complex requirements. Please format the output strictly as an array of JSON objects without any additional labels, code blocks, or explanations. Return only the JSON array with questions and answers.
+        `
+                                }
+                            ]
+                        }
+                    ]
                 },
-                body: JSON.stringify(formData),
+                {
+                    headers: {
+                        "Content-Type": "application/json"
+                    }
+                }
+            );
+            try {
+                let questionText = geminiResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+
+                // Clean unwanted formatting
+                questionText = questionText.replace(/```json|```/g, "").trim();  // Remove markdown formatting
+                questionText = questionText.replace(/[\x00-\x1F\x7F]/g, "");  // Remove control characters
+
+                console.log("Cleaned Gemini Response:", questionText); // Debugging
+
+                const parsedQuestions = JSON.parse(questionText); // Parse cleaned JSON
+
+                formData.questions = parsedQuestions; // Attach to formData
+            } catch (err) {
+                console.error("Error parsing Gemini response:", err);
+                alert("Failed to generate questions. Please try again.");
+                return;
+            }
+
+
+
+
+            const response = await axios.post("http://localhost:3009/api/interviews", formData, {
+                headers: {
+                    "Authorization": `Bearer ${token}`,
+                    "Content-Type": "application/json"
+                },
+                withCredentials: true
             });
 
-            if (response.ok) {
+            if (response.status === 201) {
                 alert("Mock interview created successfully!");
                 onSubmit(formData);
                 setJProfile("");
                 setJDesc("");
                 setJExp("");
                 setJSkills("");
-                setJExpiry(""); // Clear expiry date
+                setJExpiry("");
                 onClose();
             } else {
                 alert("Error creating interview!");
@@ -42,6 +128,7 @@ const CreateTest = ({ onClose, onSubmit }) => {
             alert("Failed to connect to server.");
         }
     };
+
     return (
         <div className="flex fixed top-0 left-0 h-screen w-screen bg-black bg-opacity-50 justify-center items-center">
             <div className="bg-black bg-opacity-70 shadow-xl shadow-gray-700 rounded-xl w-11/12 md:w-2/5 h-7/12 p-6">

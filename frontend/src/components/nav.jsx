@@ -36,6 +36,21 @@ const NavLinks = () => {
         {Object?.keys(userData)?.length > 0 && (
             <NavLink to="/dashboard">Dashboard</NavLink>)
         }
+        {Object?.keys(userData)?.length > 0 && (
+            <NavLink to="/MockInterviews">Mock Test</NavLink>)
+        }
+        {Object.keys(userData || {}).length > 0 && (
+            <NavLink
+                to="/"
+                onClick={() => {
+                    localStorage.removeItem("jwt");
+                    window.location.href = "/";
+                }}
+            >
+                Log out
+            </NavLink>
+        )}
+
 
     </>)
 }

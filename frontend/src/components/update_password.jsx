@@ -12,7 +12,7 @@ let Update_Password = () => {
         e.preventDefault();
         try {
             if (pass == cPass) {
-                const response = await axios.post('http//localhost:3009/update_password', { email, pass })
+                const response = await axios.post('http://localhost:3009/update_password', { email, pass })
                 if (response.status === 200) {
                     navigate('/login');
                 }
